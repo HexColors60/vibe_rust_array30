@@ -1,6 +1,7 @@
 // Windows GUI using egui/eframe
 // Windows 圖形介面
 
+use crate::config::{Config, FontInfo};
 use crate::dict::Dictionary;
 use crate::input_engine::InputEngine;
 use eframe::egui;
@@ -14,28 +15,104 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType},
 };
 
+/// 目前顯示的面板
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Panel {
+    Main,
+    Settings,
+}
+
 pub struct GuiApp {
     engine: InputEngine,
     phrase_file_path: PathBuf,
     cin2_file_path: PathBuf,
     clipboard_content: String,
     show_about: bool,
+    config: Config,
+    current_panel: Panel,
+    available_fonts: Vec<FontInfo>,
+    selected_font_index: usize,
+    temp_font_size: f32,
+    needs_font_reload: bool,
 }
 
 impl GuiApp {
     pub fn new(dict: Dictionary, phrase_file: PathBuf, cin2_file: PathBuf) -> Self {
+        let config = Config::load();
+        let font_size = config.font_size;
+
+        // 載入系統字型列表
+        let available_fonts = crate::config::list_system_fonts();
+
+        // 找到當前字型的索引
+        let selected_font_index = available_fonts
+            .iter()
+            .position(|f| f.path == config.font_path)
+            .unwrap_or(0);
+
         Self {
             engine: InputEngine::new(dict),
             phrase_file_path: phrase_file,
             cin2_file_path: cin2_file,
             clipboard_content: String::new(),
             show_about: false,
+            config,
+            current_panel: Panel::Main,
+            available_fonts,
+            selected_font_index,
+            temp_font_size: font_size,
+            needs_font_reload: true,
+        }
+    }
+
+    /// 套用字型設定到 egui context
+    fn apply_font_settings(&mut self, ctx: &egui::Context) {
+        if self.needs_font_reload {
+            if let Some(font_data) = self.config.load_font_data() {
+                let mut fonts = egui::FontDefinitions::default();
+
+                // 加入自定義字型作為主要字型
+                fonts.font_data.insert(
+                    "custom_font".to_owned(),
+                    egui::FontData::from_owned(font_data),
+                );
+
+                // 設定字型家族
+                fonts
+                    .families
+                    .entry(egui::FontFamily::Proportional)
+                    .or_default()
+                    .insert(0, "custom_font".to_owned());
+
+                fonts
+                    .families
+                    .entry(egui::FontFamily::Monospace)
+                    .or_default()
+                    .push("custom_font".to_owned());
+
+                ctx.set_fonts(fonts);
+            }
+
+            // 設定預設字型大小
+            let mut style = (*ctx.style()).clone();
+            style.text_styles = [
+                (egui::TextStyle::Heading, egui::FontId::new(self.config.font_size * 1.5, egui::FontFamily::Proportional)),
+                (egui::TextStyle::Body, egui::FontId::new(self.config.font_size, egui::FontFamily::Proportional)),
+                (egui::TextStyle::Button, egui::FontId::new(self.config.font_size, egui::FontFamily::Proportional)),
+                (egui::TextStyle::Small, egui::FontId::new(self.config.font_size * 0.8, egui::FontFamily::Proportional)),
+            ].into();
+
+            ctx.set_style(style);
+            self.needs_font_reload = false;
         }
     }
 }
 
 impl eframe::App for GuiApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // 套用字型設定
+        self.apply_font_settings(ctx);
+
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
                 ui.menu_button("檔案", |ui| {
@@ -50,6 +127,26 @@ impl eframe::App for GuiApp {
                     }
                 });
 
+                ui.menu_button("檢視", |ui| {
+                    let main_label = if self.current_panel == Panel::Main {
+                        "• 主畫面"
+                    } else {
+                        "主畫面"
+                    };
+                    if ui.button(main_label).clicked() {
+                        self.current_panel = Panel::Main;
+                    }
+
+                    let settings_label = if self.current_panel == Panel::Settings {
+                        "• 設定"
+                    } else {
+                        "設定"
+                    };
+                    if ui.button(settings_label).clicked() {
+                        self.current_panel = Panel::Settings;
+                    }
+                });
+
                 ui.menu_button("說明", |ui| {
                     if ui.button("關於").clicked() {
                         self.show_about = true;
@@ -58,6 +155,39 @@ impl eframe::App for GuiApp {
             });
         });
 
+        // 根據當前面板顯示不同內容
+        match self.current_panel {
+            Panel::Main => self.show_main_panel(ctx),
+            Panel::Settings => self.show_settings_panel(ctx),
+        }
+
+        // 關於對話框
+        if self.show_about {
+            egui::Window::new("關於行列 30 輸入法")
+                .collapsible(false)
+                .resizable(false)
+                .show(ctx, |ui| {
+                    ui.label("行列 30 輸入法");
+                    ui.label("Rust 實作版本");
+                    ui.separator();
+                    ui.label("操作說明：");
+                    ui.label("• 直接輸入英文字母作為行列碼");
+                    ui.label("• 按 ' 進入詞彙輸入模式");
+                    ui.label("• 數字鍵 1-9 選擇候選字");
+                    ui.label("• 空白鍵或 Enter 確認第一候選");
+                    ui.label("• Backspace 刪除");
+                    ui.label("• Esc 清空編輯區");
+                    ui.separator();
+                    if ui.button("關閉").clicked() {
+                        self.show_about = false;
+                    }
+                });
+        }
+    }
+}
+
+impl GuiApp {
+    fn show_main_panel(&mut self, ctx: &egui::Context) {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("行列 30 輸入法");
             ui.separator();
@@ -176,33 +306,117 @@ impl eframe::App for GuiApp {
             // 請求自動重繪以處理鍵盤輸入
             ctx.request_repaint();
         });
-
-        // 關於對話框
-        if self.show_about {
-            egui::Window::new("關於行列 30 輸入法")
-                .collapsible(false)
-                .resizable(false)
-                .show(ctx, |ui| {
-                    ui.label("行列 30 輸入法");
-                    ui.label("Rust 實作版本");
-                    ui.separator();
-                    ui.label("操作說明：");
-                    ui.label("• 直接輸入英文字母作為行列碼");
-                    ui.label("• 按 ' 進入詞彙輸入模式");
-                    ui.label("• 數字鍵 1-9 選擇候選字");
-                    ui.label("• 空白鍵或 Enter 確認第一候選");
-                    ui.label("• Backspace 刪除");
-                    ui.label("• Esc 清空編輯區");
-                    ui.separator();
-                    if ui.button("關閉").clicked() {
-                        self.show_about = false;
-                    }
-                });
-        }
     }
-}
 
-impl GuiApp {
+    fn show_settings_panel(&mut self, ctx: &egui::Context) {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.heading("設定");
+            ui.separator();
+
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                // 字型設定
+                ui.group(|ui| {
+                    ui.heading("字型設定");
+                    ui.separator();
+
+                    ui.label("選擇字型：");
+
+                    // 字型下拉選單
+                    egui::ComboBox::from_id_salt("font_selector")
+                        .selected_text(
+                            self.available_fonts
+                                .get(self.selected_font_index)
+                                .map(|f| &f.name)
+                                .unwrap_or(&"未選擇".to_string()),
+                        )
+                        .width(300.0)
+                        .show_ui(ui, |ui| {
+                            for (i, font) in self.available_fonts.iter().enumerate() {
+                                if ui.selectable_value(&mut self.selected_font_index, i, &font.name).changed() {
+                                    // 字型選擇變更
+                                    if let Some(font) = self.available_fonts.get(i) {
+                                        self.config.font_path = font.path.clone();
+                                        self.needs_font_reload = true;
+                                    }
+                                }
+                            }
+                        });
+
+                    ui.add_space(10.0);
+
+                    // 字型大小滑桿
+                    ui.label("字型大小：");
+                    ui.horizontal(|ui| {
+                        ui.add(egui::Slider::new(&mut self.temp_font_size, 10.0..=72.0)
+                            .step_by(1.0)
+                            .suffix(" pt"));
+                        ui.label(format!("{:.0} pt", self.temp_font_size));
+                    });
+
+                    ui.add_space(10.0);
+
+                    // 套用按鈕
+                    ui.horizontal(|ui| {
+                        if ui.button("套用字型設定").clicked() {
+                            self.config.font_size = self.temp_font_size;
+                            self.needs_font_reload = true;
+
+                            // 儲存設定
+                            if let Err(e) = self.config.save() {
+                                ui.label(format!("儲存失敗：{}", e));
+                            }
+                        }
+
+                        if ui.button("恢復預設").clicked() {
+                            self.config = Config::default();
+                            self.temp_font_size = self.config.font_size;
+                            self.selected_font_index = self.available_fonts
+                                .iter()
+                                .position(|f| f.path == self.config.font_path)
+                                .unwrap_or(0);
+                            self.needs_font_reload = true;
+                            let _ = self.config.save();
+                        }
+                    });
+
+                    // 顯示目前設定
+                    ui.separator();
+                    ui.label(format!("目前字型：{}",
+                        self.available_fonts
+                            .get(self.selected_font_index)
+                            .map(|f| &f.name)
+                            .unwrap_or(&"未知".to_string())
+                    ));
+                    ui.label(format!("目前大小：{:.0} pt", self.config.font_size));
+                });
+
+                ui.add_space(20.0);
+
+                // 其他設定
+                ui.group(|ui| {
+                    ui.heading("資訊");
+                    ui.separator();
+                    ui.label(format!("設定檔位置：{}", Config::config_file_path()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or("未知".to_string())
+                    ));
+                });
+
+                ui.add_space(20.0);
+
+                // 預覽
+                ui.group(|ui| {
+                    ui.heading("字型預覽");
+                    ui.separator();
+                    ui.label("行列 30 輸入法 Array30 Input Method");
+                    ui.label("測試文字 Test Text 測試");
+                    ui.label("漢字：一二三四五六七八九十");
+                    ui.label("詞彙：台灣、輸入法、設定");
+                });
+            });
+        });
+    }
+
     fn handle_egui_key(&mut self, key: &egui::Key) {
         match key {
             egui::Key::Backspace => {

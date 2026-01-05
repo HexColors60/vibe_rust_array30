@@ -6,6 +6,7 @@
 use std::env;
 use std::path::PathBuf;
 
+mod config;
 mod dict;
 mod input_engine;
 mod keymap;
