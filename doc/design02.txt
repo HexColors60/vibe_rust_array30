@@ -1,0 +1,4 @@
+code write with Rust lang.
+phrase in table/array30-phrase-20210725.txt
+word in table/cin2/ default is regular, can choose big in cmdline when start the ime app.
+

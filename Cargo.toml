@@ -1,0 +1,22 @@
+[package]
+name = "rustarray30"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Terminal input handling for Linux console
+crossterm = "0.28"
+
+# GUI for Windows
+[target.'cfg(windows)'.dependencies]
+egui = "0.29"
+eframe = "0.29"
+arboard = "3.4"
+
+# Dictionary and data structures
+phf = { version = "0.11", features = ["macros"] }
+regex = "1"
+
+[features]
+default = []
+big = []
