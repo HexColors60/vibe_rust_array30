@@ -17,6 +17,9 @@ egui = "0.29"
 eframe = "0.29"
 arboard = "3.4"
 
+# Image loading for all platforms
+image = { version = "0.25", features = ["jpeg"] }
+
 # Dictionary and data structures
 phf = { version = "0.11", features = ["macros"] }
 regex = "1"

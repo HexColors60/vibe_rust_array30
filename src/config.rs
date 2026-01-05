@@ -7,6 +7,50 @@ use std::path::{Path, PathBuf};
 const DEFAULT_FONT_SIZE: f32 = 20.0;
 const CONFIG_FILENAME: &str = "settings.ini";
 
+/// 字根表位置
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RootTablePosition {
+    /// 上方
+    Up,
+    /// 下方
+    Down,
+    /// 左側
+    Left,
+    /// 右側
+    Right,
+}
+
+impl RootTablePosition {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RootTablePosition::Up => "up",
+            RootTablePosition::Down => "down",
+            RootTablePosition::Left => "left",
+            RootTablePosition::Right => "right",
+        }
+    }
+
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            RootTablePosition::Up => "上方",
+            RootTablePosition::Down => "下方",
+            RootTablePosition::Left => "左側",
+            RootTablePosition::Right => "右側",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "up" => Some(RootTablePosition::Up),
+            "down" => Some(RootTablePosition::Down),
+            "left" => Some(RootTablePosition::Left),
+            "right" => Some(RootTablePosition::Right),
+            _ => None,
+        }
+    }
+}
+
 /// 應用程式設定
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -14,6 +58,16 @@ pub struct Config {
     pub font_path: String,
     /// 字型大小
     pub font_size: f32,
+    /// 顯示行列字根表
+    pub show_root_table: bool,
+    /// 字根表圖片縮放比例 (0.1 - 2.0)
+    pub root_table_scale: f32,
+    /// 視窗寬度
+    pub window_width: f32,
+    /// 視窗高度
+    pub window_height: f32,
+    /// 字根表位置
+    pub root_table_position: RootTablePosition,
 }
 
 impl Default for Config {
@@ -21,6 +75,11 @@ impl Default for Config {
         Self {
             font_path: get_default_font_path(),
             font_size: DEFAULT_FONT_SIZE,
+            show_root_table: true,
+            root_table_scale: 0.5,
+            window_width: 1600.0,
+            window_height: 900.0,
+            root_table_position: RootTablePosition::Up,
         }
     }
 }
@@ -76,6 +135,11 @@ impl Config {
     fn parse_ini(content: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let mut font_path = String::new();
         let mut font_size = DEFAULT_FONT_SIZE;
+        let mut show_root_table = true;
+        let mut root_table_scale = 0.5;
+        let mut window_width = 1600.0;
+        let mut window_height = 900.0;
+        let mut root_table_position = RootTablePosition::Up;
 
         for line in content.lines() {
             let line = line.trim();
@@ -96,6 +160,31 @@ impl Config {
                             font_size = size.max(10.0).min(72.0);
                         }
                     }
+                    "show_root_table" => {
+                        show_root_table = value.eq_ignore_ascii_case("true") ||
+                                         value == "1" ||
+                                         value.eq_ignore_ascii_case("yes");
+                    }
+                    "root_table_scale" => {
+                        if let Ok(scale) = value.parse::<f32>() {
+                            root_table_scale = scale.max(0.1).min(2.0);
+                        }
+                    }
+                    "window_width" => {
+                        if let Ok(w) = value.parse::<f32>() {
+                            window_width = w.max(800.0).min(3840.0);
+                        }
+                    }
+                    "window_height" => {
+                        if let Ok(h) = value.parse::<f32>() {
+                            window_height = h.max(600.0).min(2160.0);
+                        }
+                    }
+                    "root_table_position" => {
+                        if let Some(pos) = RootTablePosition::from_str(value) {
+                            root_table_position = pos;
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -109,6 +198,11 @@ impl Config {
         Ok(Self {
             font_path,
             font_size,
+            show_root_table,
+            root_table_scale,
+            window_width,
+            window_height,
+            root_table_position,
         })
     }
 
@@ -123,8 +217,27 @@ impl Config {
                  font_path={}\n\
                  \n\
                  # Font size in points (字型大小)\n\
-                 font_size={}",
-                self.font_path, self.font_size
+                 font_size={}\n\
+                 \n\
+                 # Show root table image (顯示字根表)\n\
+                 show_root_table={}\n\
+                 \n\
+                 # Root table image scale (字根表縮放比例 0.1-2.0)\n\
+                 root_table_scale={}\n\
+                 \n\
+                 # Window size (視窗大小)\n\
+                 window_width={}\n\
+                 window_height={}\n\
+                 \n\
+                 # Root table position (字根表位置: up/down/left/right)\n\
+                 root_table_position={}",
+                self.font_path,
+                self.font_size,
+                self.show_root_table,
+                self.root_table_scale,
+                self.window_width,
+                self.window_height,
+                self.root_table_position.as_str()
             );
 
             std::fs::write(&path, content)?;

@@ -1,7 +1,7 @@
 // Windows GUI using egui/eframe
 // Windows 圖形介面
 
-use crate::config::{Config, FontInfo};
+use crate::config::{Config, FontInfo, RootTablePosition};
 use crate::dict::Dictionary;
 use crate::input_engine::InputEngine;
 use eframe::egui;
@@ -33,6 +33,13 @@ pub struct GuiApp {
     available_fonts: Vec<FontInfo>,
     selected_font_index: usize,
     temp_font_size: f32,
+    temp_show_root_table: bool,
+    temp_root_table_scale: f32,
+    temp_window_width: f32,
+    temp_window_height: f32,
+    temp_root_table_position: RootTablePosition,
+    root_table_image: Option<egui::ColorImage>,
+    root_table_texture: Option<egui::TextureHandle>,
     needs_font_reload: bool,
 }
 
@@ -50,17 +57,27 @@ impl GuiApp {
             .position(|f| f.path == config.font_path)
             .unwrap_or(0);
 
+        // 載入字根表圖片
+        let root_table_image = Self::load_root_table_image();
+
         Self {
             engine: InputEngine::new(dict),
             phrase_file_path: phrase_file,
             cin2_file_path: cin2_file,
             clipboard_content: String::new(),
             show_about: false,
-            config,
+            config: config.clone(),
             current_panel: Panel::Main,
             available_fonts,
             selected_font_index,
             temp_font_size: font_size,
+            temp_show_root_table: config.show_root_table,
+            temp_root_table_scale: config.root_table_scale,
+            temp_window_width: config.window_width,
+            temp_window_height: config.window_height,
+            temp_root_table_position: config.root_table_position,
+            root_table_image,
+            root_table_texture: None,
             needs_font_reload: true,
         }
     }
@@ -105,6 +122,36 @@ impl GuiApp {
             ctx.set_style(style);
             self.needs_font_reload = false;
         }
+    }
+
+    /// 載入字根表圖片
+    fn load_root_table_image() -> Option<egui::ColorImage> {
+        let image_path = std::path::Path::new("table").join("行列字根表v2023.jpg");
+        if let Ok(image_data) = std::fs::read(&image_path) {
+            if let Ok(img) = image::load_from_memory(&image_data) {
+                let rgba = img.to_rgba8();
+                let size = [rgba.width() as usize, rgba.height() as usize];
+                let pixels = rgba.into_raw();
+                return Some(egui::ColorImage::from_rgba_unmultiplied(size, &pixels));
+            }
+        }
+        eprintln!("無法載入字根表圖片：{:?}", image_path);
+        None
+    }
+
+    /// 取得或建立字根表紋理
+    fn get_root_table_texture(&mut self, ctx: &egui::Context) -> Option<&egui::TextureHandle> {
+        if self.root_table_texture.is_none() {
+            if let Some(ref image) = self.root_table_image {
+                let texture = ctx.load_texture(
+                    "root_table",
+                    image.clone(),
+                    egui::TextureOptions::LINEAR,
+                );
+                self.root_table_texture = Some(texture);
+            }
+        }
+        self.root_table_texture.as_ref()
     }
 }
 
@@ -188,123 +235,215 @@ impl eframe::App for GuiApp {
 
 impl GuiApp {
     fn show_main_panel(&mut self, ctx: &egui::Context) {
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("行列 30 輸入法");
-            ui.separator();
+        // 根據字根表位置決定面板配置
+        if self.config.show_root_table && self.config.root_table_position != RootTablePosition::Down {
+            // 先顯示字根表（上方、左側、右側）
+            self.show_root_table_panel(ctx);
+        }
 
-            // 複製需要使用的狀態資料
-            let raw_keys = self.engine.state().raw_keys.clone();
-            let current_code = self.engine.state().current_code.clone();
-            let output = self.engine.state().output.clone();
-            let hint = self.engine.state().get_hint();
-            let candidates: Vec<_> = self.engine.current_page_candidates().to_vec();
-            let has_candidates = !candidates.is_empty();
-
-            // 鍵盤輸入區
-            ui.group(|ui| {
-                ui.label("鍵盤輸入區：");
-                ui.horizontal(|ui| {
-                    ui.label(&raw_keys);
+        // 主要內容區
+        match self.config.root_table_position {
+            RootTablePosition::Left => {
+                egui::SidePanel::left("main_content")
+                    .default_width(600.0)
+                    .show(ctx, |ui| {
+                        self.show_main_content(ui, ctx);
+                    });
+            }
+            RootTablePosition::Right => {
+                egui::SidePanel::right("main_content")
+                    .default_width(600.0)
+                    .show(ctx, |ui| {
+                        self.show_main_content(ui, ctx);
+                    });
+            }
+            _ => {
+                // Up 或 Down 使用中央面板
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    self.show_main_content(ui, ctx);
                 });
-            });
+            }
+        }
 
-            // 編輯區
-            ui.group(|ui| {
-                ui.label("編輯區：");
-                if !current_code.is_empty() {
-                    ui.horizontal(|ui| {
-                        ui.label(format!("碼：{}", current_code));
-                    });
+        // 字根表在下方
+        if self.config.show_root_table && self.config.root_table_position == RootTablePosition::Down {
+            egui::TopBottomPanel::bottom("root_table_bottom")
+                .default_height(400.0)
+                .show(ctx, |ui| {
+                    self.show_root_table_content(ui, ctx);
+                });
+        }
+    }
 
-                    // 候選列表
-                    if has_candidates {
-                        ui.separator();
-                        ui.label("候選字/詞：");
-                        ui.horizontal_wrapped(|ui| {
-                            for (i, cand) in candidates.iter().enumerate() {
-                                let cand_text = cand.text.clone();
-                                if ui.button(format!("[{}] {}", i + 1, cand_text)).clicked() {
-                                    self.engine.select_candidate(i);
-                                }
-                            }
-                        });
+    fn show_main_content(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        ui.heading("行列 30 輸入法");
+        ui.separator();
 
-                        // 分頁按鈕
-                        ui.horizontal(|ui| {
-                            if ui.button("◄ 上一頁").clicked() {
-                                self.engine.prev_page();
-                            }
-                            if ui.button("下一頁 ►").clicked() {
-                                self.engine.next_page();
-                            }
-                        });
-                    } else {
-                        ui.label("（無候選字）");
-                    }
-                } else {
-                    ui.label("（空）");
-                }
-            });
+        // 複製需要使用的狀態資料
+        let raw_keys = self.engine.state().raw_keys.clone();
+        let current_code = self.engine.state().current_code.clone();
+        let output = self.engine.state().output.clone();
+        let hint = self.engine.state().get_hint();
+        let candidates: Vec<_> = self.engine.current_page_candidates().to_vec();
+        let has_candidates = !candidates.is_empty();
 
-            // 輸出區
-            ui.group(|ui| {
-                ui.label("輸出區：");
-                egui::ScrollArea::vertical()
-                    .max_height(100.0)
-                    .show(ui, |ui| {
-                        if output.is_empty() {
-                            ui.label("（空）");
-                        } else {
-                            ui.label(&output);
-                        }
-                    });
-            });
-
-            // 提示區
-            ui.group(|ui| {
-                ui.label("提示：");
-                ui.label(hint);
-            });
-
-            // 複製按鈕
+        // 鍵盤輸入區
+        ui.group(|ui| {
+            ui.label("鍵盤輸入區：");
             ui.horizontal(|ui| {
-                if ui.button("📋 複製輸出到剪貼簿").clicked() {
-                    let output_text = self.engine.get_output_text();
-                    if let Some(mut clipboard) = arboard::Clipboard::new().ok() {
-                        let _ = clipboard.set_text(&output_text);
-                        self.clipboard_content = output_text;
-                    }
-                }
-
-                if !self.clipboard_content.is_empty() {
-                    ui.label(format!("已複製 {} 字元", self.clipboard_content.len()));
-                }
+                ui.label(&raw_keys);
             });
+        });
 
-            // 檔案資訊
-            ui.separator();
-            ui.label(format!("詞庫：{}", self.phrase_file_path.display()));
-            ui.label(format!("字表：{}", self.cin2_file_path.display()));
+        // 編輯區
+        ui.group(|ui| {
+            ui.label("編輯區：");
+            if !current_code.is_empty() {
+                ui.horizontal(|ui| {
+                    ui.label(format!("碼：{}", current_code));
+                });
 
-            // 鍵盤輸入處理
-            ui.input(|i| {
-                for event in &i.events {
-                    if let egui::Event::Key { key, pressed: true, .. } = event {
-                        self.handle_egui_key(key);
-                    }
-                    if let egui::Event::Text(text) = event {
-                        for c in text.chars() {
-                            // 只處理可見字元
-                            if c.is_ascii() && !c.is_ascii_control() {
-                                self.engine.handle_key(c);
+                // 候選列表
+                if has_candidates {
+                    ui.separator();
+                    ui.label("候選字/詞：");
+                    ui.horizontal_wrapped(|ui| {
+                        for (i, cand) in candidates.iter().enumerate() {
+                            let cand_text = cand.text.clone();
+                            if ui.button(format!("[{}] {}", i + 1, cand_text)).clicked() {
+                                self.engine.select_candidate(i);
                             }
+                        }
+                    });
+
+                    // 分頁按鈕
+                    ui.horizontal(|ui| {
+                        if ui.button("◄ 上一頁").clicked() {
+                            self.engine.prev_page();
+                        }
+                        if ui.button("下一頁 ►").clicked() {
+                            self.engine.next_page();
+                        }
+                    });
+                } else {
+                    ui.label("（無候選字）");
+                }
+            } else {
+                ui.label("（空）");
+            }
+        });
+
+        // 輸出區
+        ui.group(|ui| {
+            ui.label("輸出區：");
+            egui::ScrollArea::vertical()
+                .max_height(100.0)
+                .show(ui, |ui| {
+                    if output.is_empty() {
+                        ui.label("（空）");
+                    } else {
+                        ui.label(&output);
+                    }
+                });
+        });
+
+        // 提示區
+        ui.group(|ui| {
+            ui.label("提示：");
+            ui.label(hint);
+        });
+
+        // 複製按鈕
+        ui.horizontal(|ui| {
+            if ui.button("📋 複製輸出到剪貼簿").clicked() {
+                let output_text = self.engine.get_output_text();
+                if let Some(mut clipboard) = arboard::Clipboard::new().ok() {
+                    let _ = clipboard.set_text(&output_text);
+                    self.clipboard_content = output_text;
+                }
+            }
+
+            if !self.clipboard_content.is_empty() {
+                ui.label(format!("已複製 {} 字元", self.clipboard_content.len()));
+            }
+        });
+
+        // 檔案資訊
+        ui.separator();
+        ui.label(format!("詞庫：{}", self.phrase_file_path.display()));
+        ui.label(format!("字表：{}", self.cin2_file_path.display()));
+
+        // 鍵盤輸入處理
+        ui.input(|i| {
+            for event in &i.events {
+                if let egui::Event::Key { key, pressed: true, .. } = event {
+                    self.handle_egui_key(key);
+                }
+                if let egui::Event::Text(text) = event {
+                    for c in text.chars() {
+                        // 只處理可見字元
+                        if c.is_ascii() && !c.is_ascii_control() {
+                            self.engine.handle_key(c);
                         }
                     }
                 }
-            });
+            }
+        });
 
-            // 請求自動重繪以處理鍵盤輸入
-            ctx.request_repaint();
+        // 請求自動重繪以處理鍵盤輸入
+        ctx.request_repaint();
+    }
+
+    fn show_root_table_panel(&mut self, ctx: &egui::Context) {
+        match self.config.root_table_position {
+            RootTablePosition::Up => {
+                egui::TopBottomPanel::top("root_table_top")
+                    .default_height(400.0)
+                    .show(ctx, |ui| {
+                        self.show_root_table_content(ui, ctx);
+                    });
+            }
+            RootTablePosition::Left => {
+                egui::SidePanel::left("root_table_left")
+                    .default_width(400.0)
+                    .show(ctx, |ui| {
+                        self.show_root_table_content(ui, ctx);
+                    });
+            }
+            RootTablePosition::Right => {
+                egui::SidePanel::right("root_table_right")
+                    .default_width(400.0)
+                    .show(ctx, |ui| {
+                        self.show_root_table_content(ui, ctx);
+                    });
+            }
+            RootTablePosition::Down => {
+                // Down case is handled separately in show_main_panel
+            }
+        }
+    }
+
+    fn show_root_table_content(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        ui.group(|ui| {
+            ui.label("行列字根表 v2023");
+            let scale = self.config.root_table_scale;
+
+            if let Some(texture) = self.get_root_table_texture(ctx) {
+                let original_size = texture.size_vec2();
+                let scaled_size = original_size * scale;
+
+                // 可滾動的圖片區域
+                egui::ScrollArea::both()
+                    .max_width(f32::INFINITY)
+                    .max_height(f32::INFINITY)
+                    .show(ui, |ui| {
+                        ui.image((texture.id(), scaled_size));
+                    });
+
+                ui.label(format!("縮放：{:.0}%", scale * 100.0));
+            } else {
+                ui.label("（無法載入字根表圖片）");
+            }
         });
     }
 
@@ -392,6 +531,106 @@ impl GuiApp {
 
                 ui.add_space(20.0);
 
+                // 視窗設定
+                ui.group(|ui| {
+                    ui.heading("視窗設定");
+                    ui.separator();
+
+                    // 視窗大小
+                    ui.label("視窗寬度：");
+                    ui.horizontal(|ui| {
+                        ui.add(egui::Slider::new(&mut self.temp_window_width, 800.0..=3840.0)
+                            .step_by(10.0)
+                            .suffix(" px"));
+                        ui.label(format!("{:.0} px", self.temp_window_width));
+                    });
+
+                    ui.label("視窗高度：");
+                    ui.horizontal(|ui| {
+                        ui.add(egui::Slider::new(&mut self.temp_window_height, 600.0..=2160.0)
+                            .step_by(10.0)
+                            .suffix(" px"));
+                        ui.label(format!("{:.0} px", self.temp_window_height));
+                    });
+
+                    ui.add_space(10.0);
+
+                    // 套用按鈕
+                    ui.horizontal(|ui| {
+                        if ui.button("套用視窗設定").clicked() {
+                            self.config.window_width = self.temp_window_width;
+                            self.config.window_height = self.temp_window_height;
+
+                            // 儲存設定
+                            if let Err(e) = self.config.save() {
+                                ui.label(format!("儲存失敗：{}", e));
+                            }
+                        }
+                    });
+
+                    // 顯示目前設定
+                    ui.separator();
+                    ui.label(format!("目前大小：{:.0} x {:.0}", self.config.window_width, self.config.window_height));
+                });
+
+                ui.add_space(20.0);
+
+                // 字根表設定
+                ui.group(|ui| {
+                    ui.heading("字根表設定");
+                    ui.separator();
+
+                    ui.label("顯示字根表：");
+                    ui.checkbox(&mut self.temp_show_root_table, "啟用字根表顯示");
+
+                    ui.add_space(10.0);
+
+                    ui.label("字根表縮放：");
+                    ui.horizontal(|ui| {
+                        ui.add(egui::Slider::new(&mut self.temp_root_table_scale, 0.1..=2.0)
+                            .step_by(0.1)
+                            .suffix("x"));
+                        ui.label(format!("{:.1}x", self.temp_root_table_scale));
+                    });
+
+                    ui.add_space(10.0);
+
+                    ui.label("字根表位置：");
+                    egui::ComboBox::from_id_salt("root_table_position")
+                        .selected_text(format!("{:?}", self.temp_root_table_position))
+                        .width(200.0)
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut self.temp_root_table_position, RootTablePosition::Up, "上");
+                            ui.selectable_value(&mut self.temp_root_table_position, RootTablePosition::Down, "下");
+                            ui.selectable_value(&mut self.temp_root_table_position, RootTablePosition::Left, "左");
+                            ui.selectable_value(&mut self.temp_root_table_position, RootTablePosition::Right, "右");
+                        });
+
+                    ui.add_space(10.0);
+
+                    // 套用按鈕
+                    ui.horizontal(|ui| {
+                        if ui.button("套用字根表設定").clicked() {
+                            self.config.show_root_table = self.temp_show_root_table;
+                            self.config.root_table_scale = self.temp_root_table_scale;
+                            self.config.root_table_position = self.temp_root_table_position;
+
+                            // 儲存設定
+                            if let Err(e) = self.config.save() {
+                                ui.label(format!("儲存失敗：{}", e));
+                            }
+                        }
+                    });
+
+                    // 顯示目前設定
+                    ui.separator();
+                    ui.label(format!("顯示：{}", if self.config.show_root_table { "是" } else { "否" }));
+                    ui.label(format!("縮放：{:.1}x", self.config.root_table_scale));
+                    ui.label(format!("位置：{:?}", self.config.root_table_position));
+                });
+
+                ui.add_space(20.0);
+
                 // 其他設定
                 ui.group(|ui| {
                     ui.heading("資訊");
@@ -437,9 +676,11 @@ impl GuiApp {
 }
 
 pub fn run_gui(dict: Dictionary, phrase_file: PathBuf, cin2_file: PathBuf) -> eframe::Result<()> {
+    let config = Config::load();
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([800.0, 600.0])
+            .with_inner_size([config.window_width, config.window_height])
             .with_min_inner_size([600.0, 400.0])
             .with_title("行列 30 輸入法"),
         ..Default::default()
