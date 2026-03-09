@@ -1,0 +1,261 @@
+===============================================================================
+行列 30 輸入法 Rust 實作 - 對話記錄
+日期: 2025-01-22
+===============================================================================
+
+User: read doc/design01.txt and doc/design02.txt and use Rust lang to write the app.
+
+AI: I'll analyze the design documents and implement the Array30 Input Method in Rust.
+
+[讀取設計文件 doc/design01.txt 和 doc/design02.txt]
+
+設計文件重點:
+1. 系統總體說明 - Windows GUI + Linux Console
+2. 輸入法核心規則 - 行列30鍵盤、單字取碼、詞彙輸入
+3. 應用程式介面規格 - 四個區塊: 鍵盤輸入區、編輯區、輸出區、提示區
+4. 詞彙於 table/array30-phrase-20210725.txt
+5. 字表於 table/cin2/ (regular 或 big)
+
+[建立專案結構]
+- 初始化 Rust 專案 (cargo init)
+- 更新 Cargo.toml 加入依賴 (crossterm, egui, eframe, arboard, phf, regex)
+
+[實作核心模組]
+- src/keymap.rs: Array30Key enum 對應30個鍵位
+- src/state.rs: InputState, InputMode, Candidate 結構
+- src/dict.rs: Dictionary 結構，支援 phrase file 和 cin2 file 解析
+- src/input_engine.rs: InputEngine 核心邏輯
+
+[實作平台介面]
+- src/gui.rs: Windows GUI (egui/eframe)
+- src/console.rs: Linux Console (crossterm)
+
+[測試建置]
+專案建置成功，可執行 --help 顯示說明
+
+===============================================================================
+
+User: use c:\windows\fonts MSJH.TTC as default font and add setting config tab
+and choose font from c:\windows\fonts to change, save me settings.ini,
+default font is 20 size and can change in the settings tab.
+
+AI: I'll add font configuration with MSJH.TTC as default font, settings tab,
+and save to settings.ini.
+
+[新增依賴]
+cargo add serde serde_json ini dirs
+
+[實作 config.rs]
+- Config 結構: font_path, font_size
+- 預設字型: C:\Windows\Fonts\MSJH.TTC
+- 預設大小: 20pt
+- load(): 載入 INI 設定檔
+- save(): 儲存設定到 settings.ini
+- load_font_data(): 載入字型檔案
+- list_system_fonts(): 列舉 Windows 字型目錄中的字型
+- FontInfo 結構: name, file_name, path
+
+[更新 gui.rs]
+- GuiApp 新增欄位: config, available_fonts, selected_font_index, temp_font_size, needs_font_reload
+- apply_font_settings(): 套用字型到 egui context
+- Settings tab 新增:
+  - 字型下拉選單
+  - 字型大小滑桿 (10-72pt)
+  - 套用/恢復預設按鈕
+  - 字型預覽區
+
+[測試建置]
+專案建置成功
+
+===============================================================================
+
+User: show the table\行列字根表v2023.jpg in main input window for user can see
+the root of array30 ime and correct typing. it is default show and can be
+resize or turn off on setting tab.
+
+AI: I'll add the root table image display to the main window with show/hide
+and resize settings in the settings tab.
+
+[更新 config.rs]
+- Config 新增欄位:
+  - show_root_table: bool (預設 true)
+  - root_table_scale: f32 (預設 0.5, 範圍 0.1-2.0)
+
+[更新 gui.rs]
+- GuiApp 新增欄位:
+  - temp_show_root_table: bool
+  - temp_root_table_scale: f32
+  - root_table_image: Option<egui::ColorImage>
+  - root_table_texture: Option<egui::TextureHandle>
+
+- 新增方法:
+  - load_root_table_image(): 載入 table/行列字根表v2023.jpg
+  - get_root_table_texture(): 取得或建立紋理
+
+- show_main_panel(): 新增字根表顯示區塊
+  - 可滾動的圖片區域 (800x600)
+  - 顯示縮放百分比
+
+- Settings tab 新增「字根表設定」區塊:
+  - 顯示/隱藏 checkbox
+  - 縮放滑桿 (0.1x - 2.0x)
+  - 套用按鈕
+
+[更新 Cargo.toml]
+- 新增 image 依賴 (0.25, features = ["jpeg"])
+
+[測試建置]
+專案建置成功
+
+===============================================================================
+
+User: Change defulat to 1600x900 pixel view port. and this is save on setting.ini
+and setting tab can change. and the root jpg can display on up or right or left
+or down of main window, it also can config in setting tab and setting.ini
+
+AI: I'll add viewport size settings (1600x900 default) and root table position
+settings (up/right/left/down) to both the settings.ini and settings tab.
+
+[更新 config.rs]
+- RootTablePosition enum:
+  - Up, Down, Left, Right 變體
+  - as_str(), display_name(), from_str() 方法
+
+- Config 新增欄位:
+  - window_width: f32 (預設 1600.0, 範圍 800-3840)
+  - window_height: f32 (預設 900.0, 範圍 600-2160)
+  - root_table_position: RootTablePosition (預設 Up)
+
+- parse_ini(): 解析新設定值
+- save(): 儲存新設定到 INI
+
+[更新 gui.rs]
+- GuiApp 新增欄位:
+  - temp_window_width, temp_window_height
+  - temp_root_table_position
+
+- run_gui(): 使用 config.window_width, config.window_height 設定視窗大小
+
+- 重構 show_main_panel(): 支援4種字根表位置配置
+  - Up: TopBottomPanel::top
+  - Down: TopBottomPanel::bottom
+  - Left: SidePanel::left
+  - Right: SidePanel::right
+
+- 新增 helper 方法:
+  - show_main_content(): 主要輸入內容區
+  - show_root_table_panel(): 字根表面板配置
+  - show_root_table_content(): 字根表內容顯示
+
+- Settings tab 新增:
+  - 視窗設定區塊: 寬度/高度滑桿
+  - 字根表設定: 位置下拉選單 (上/下/左/右)
+
+[測試建置]
+專案建置成功
+
+===============================================================================
+
+User: save this convertion msg into dev/work20260105.txt
+
+AI: I'll save this conversation log to dev/work20260105.txt.
+
+[建立 dev 目錄]
+[寫入 dev/work20260105.txt]
+包含完整的工作記錄:
+- 設計文件參考
+- 實作功能總覽
+- 專案結構
+- 核心模組說明
+- 設定檔格式
+- 命令列參數
+- 輸入法規則實作
+- 字根表顯示功能
+- 建置與執行
+- 依賴套件
+- 使用說明
+- 檔案狀態
+- 開發歷程
+- 已知限制與後續改進
+
+===============================================================================
+
+User: save conversion to talk20260122.txt
+
+AI: I'll save this conversation record to talk20260122.txt.
+
+===============================================================================
+最終功能總結
+===============================================================================
+
+完成功能:
+
+1. 核心輸入法引擎
+   - 30鍵行列鍵盤對應
+   - 單字輸入 (1-4碼)
+   - 詞彙輸入模式 (按 ' 鍵)
+   - 候選字列表與翻頁
+
+2. 字典系統
+   - 詞庫檔解析 (array30-phrase-20210725.txt)
+   - cin2字表解析 (regular/big版本)
+   - 快速查找機制
+
+3. Windows GUI (egui)
+   - 主輸入畫面
+   - 設定面板
+   - 剪貼簿支援
+   - 字型設定 (預設 MSJH.TTC 20pt)
+   - 字根表顯示 (行列字根表v2023.jpg)
+   - 視窗大小設定 (1600x900 預設)
+   - 字根表位置 (上/下/左/右)
+
+4. Linux Console (crossterm)
+   - 終端機介面
+   - 原生鍵盤處理
+
+5. 設定管理 (settings.ini)
+   - 字型路徑與大小
+   - 字根表顯示與縮放
+   - 視窗尺寸
+   - 字根表位置
+
+===============================================================================
+檔案清單
+===============================================================================
+
+主要原始碼:
+- src/main.rs - 主程式
+- src/lib.rs - 函式庫
+- src/keymap.rs - 鍵盤對應
+- src/state.rs - 狀態機
+- src/dict.rs - 字典
+- src/input_engine.rs - 輸入引擎
+- src/config.rs - 設定管理
+- src/gui.rs - Windows GUI
+- src/console.rs - Linux Console
+
+設定與資料:
+- settings.ini - 設定檔 (執行時生成)
+- table/array30-phrase-20210725.txt - 詞庫
+- table/cin2/ar30-regular-v2023-1.0-20251012.cin2 - 標準字表
+- table/cin2/ar30-big-v2023-1.0-20251012.cin2 - 大字集字表
+- table/行列字根表v2023.jpg - 字根表圖片
+
+文檔:
+- doc/design01.txt - 輸入法設計
+- doc/design02.txt - 資料檔設計
+- dev/work20260105.txt - 工作記錄
+- talk20260122.txt - 對話記錄 (本檔)
+
+===============================================================================
+建置與執行指令
+===============================================================================
+
+cargo build                    # 建置專案
+cargo build --release          # 建置最佳化版本
+cargo run --release            # 執行 GUI 模式
+cargo run --release -- --big   # 使用大字集
+cargo run --release -- --console  # 終端機模式
+
+===============================================================================
